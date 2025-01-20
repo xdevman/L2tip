@@ -2,9 +2,41 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const db = require('./db'); // Import db module
+const {Web3} = require('web3');
+
+const web3 = new Web3(`https://sepolia.infura.io/v3/${process.env.INFURA_TOKEN}`);
 
 const proxyUrl = 'socks5h://127.0.0.1:2080';
 const agent = new SocksProxyAgent(proxyUrl);
+
+// Function to get the balance from Infura by wallet address and update the database if needed
+async function checkAndUpdateBalance(userId) {
+  try {
+    const walletAddress = await db.getWalletById(userId);
+    if (!walletAddress) {
+      console.error('Wallet address not found for user:', userId);
+      return;
+    }
+
+    const balanceInWei = await web3.eth.getBalance(walletAddress);
+    const balanceInEth = web3.utils.fromWei(balanceInWei, 'ether');
+
+    const dbBalance = await db.getUserBalance(userId);
+
+    if (parseFloat(balanceInEth) !== dbBalance) {
+      await db.updateBalance(userId, parseFloat(balanceInEth));
+      console.log(`Balance updated for user ${userId}: ${balanceInEth} ETH`);
+    }
+  } catch (error) {
+    console.error('Error checking and updating balance:', error);
+  }
+}
+
+//Generate Wallet : 
+function generateWalletAddress() {
+  const account = web3.eth.accounts.create();
+  return account.address;
+}
 
 const bot = new Telegraf(process.env.BOT_TOKEN, {
   telegram: { agent },
@@ -15,24 +47,29 @@ bot.start(async (ctx) => {
   const userId = ctx.from.id;
   const username = ctx.from.username || null;
 
-  await db.addUser(userId, username, (err) => {
-    if (err) {
-      console.error('Error adding user:', err);
-      ctx.reply('There was an error initializing your account.');
+  try {
+    const userExists = await db.getUserById(userId);
+    if (userExists) {
+      ctx.reply('Welcome back! Your account is already set up.');
     } else {
+      const walletaddress = generateWalletAddress();
+      await db.addUser(userId, username, walletaddress);
       ctx.reply('Welcome! Your account has been set up.');
     }
-  });
+  } catch (err) {
+    console.error('Error checking or adding user:', err);
+    ctx.reply('There was an error initializing your account.');
+  }
 });
 
 
 // /balance command
 bot.command('balance', async (ctx) => {
   const userId = ctx.from.id;
-
+  checkAndUpdateBalance(userId)
   try {
     const balance = await db.getUserBalance(userId);
-    await ctx.reply(`Your balance is: ${balance} units.`);
+    await ctx.reply(`Your balance is: ${balance} ETH.`);
   } catch (error) {
     console.error('Error fetching balance:', error);
     await ctx.reply('An error occurred while fetching your balance.');
@@ -115,10 +152,15 @@ bot.command('tip', async (ctx) => {
   
   
 
+  
 // Deposit button command (sample wallet address)
 bot.command('deposit', async (ctx) => {
-  const sampleWallet = '1234-5678-9012-3456'; // Replace with actual deposit mechanism
-  await ctx.reply(`To deposit, please send funds to this address: ${sampleWallet}`);
+  const senderId = ctx.from.id;
+  const walletaddress = await db.getWalletById(senderId);
+  
+  if (walletaddress) {
+  await ctx.reply(`To deposit, please send funds to this address: ${walletaddress}`);
+  }
 });
 
 

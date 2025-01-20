@@ -16,56 +16,30 @@ dbInstance.serialize(() => {
     CREATE TABLE IF NOT EXISTS users (
       userId INTEGER PRIMARY KEY,
       username TEXT,
+      walletaddress TEXT,
+      balance REAL DEFAULT 0,
       joinDate TEXT
     )
   `);
 
-  dbInstance.run(`
-    CREATE TABLE IF NOT EXISTS balances (
-      userId INTEGER PRIMARY KEY,
-      balance REAL DEFAULT 0,
-      lastUpdated TEXT,
-      FOREIGN KEY (userId) REFERENCES users(userId)
-    )
-  `);
-
-  dbInstance.run(`
-    CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      senderId INTEGER,
-      recipientId INTEGER,
-      amount REAL,
-      date TEXT,
-      FOREIGN KEY (senderId) REFERENCES users(userId),
-      FOREIGN KEY (recipientId) REFERENCES users(userId)
-    )
-  `);
 });
 
 // Insert or update user
-const addUser = (userId, username, callback) => {
+const addUser = (userId, username, walletaddress, callback) => {
   const joinDate = new Date().toISOString();
   dbInstance.run(
     `
-    INSERT INTO users (userId, username, joinDate)
-    VALUES (?, ?, ?)
-    ON CONFLICT(userId) DO UPDATE SET username = excluded.username
+    INSERT INTO users (userId, username, walletaddress, joinDate)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(userId) DO UPDATE SET username = excluded.username, walletaddress = excluded.walletaddress
   `,
-    [userId, username, joinDate],
+    [userId, username, walletaddress, joinDate],
     (err) => {
       if (err) {
         console.error('Error adding user:', err);
         callback(err);
       } else {
-        dbInstance.run(
-          `
-          INSERT INTO balances (userId, balance, lastUpdated)
-          VALUES (?, 90, ?)
-          ON CONFLICT(userId) DO NOTHING
-        `,
-          [userId, joinDate],
-          callback
-        );
+        callback(null);
       }
     }
   );
@@ -75,7 +49,7 @@ const addUser = (userId, username, callback) => {
 const getUserBalance = (userId) => {
   return new Promise((resolve, reject) => {
     dbInstance.get(
-      'SELECT balance FROM balances WHERE userId = ?',
+      'SELECT balance FROM users WHERE userId = ?',
       [userId],
       (err, row) => {
         if (err) {
@@ -94,11 +68,11 @@ const updateBalance = (userId, amount) => {
     const lastUpdated = new Date().toISOString();
     dbInstance.run(
       `
-      UPDATE balances
-      SET balance = balance + ?, lastUpdated = ?
+      UPDATE users
+      SET balance = ?
       WHERE userId = ?
     `,
-      [amount, lastUpdated, userId],
+      [amount, userId],
       function (err) {
         if (err) {
           reject(err);
@@ -148,6 +122,23 @@ const getUserById = (userId) => {
   });
 };
 
+// Get walletaddress by ID
+const getWalletById = (userId) => {
+  return new Promise((resolve, reject) => {
+    dbInstance.get(
+      'SELECT walletaddress FROM users WHERE userId = ?',
+      [userId],
+      (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row ? row.walletaddress : null); // Return null if no walletaddress found
+        }
+      }
+    );
+  });
+};
+
 // Get user by username
 const getUserByUsername = (username) => {
   return new Promise((resolve, reject) => {
@@ -173,4 +164,5 @@ module.exports = {
   logTransaction,
   getUserById,
   getUserByUsername,
+  getWalletById,
 };
